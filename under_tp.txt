@@ -1,0 +1,2462 @@
+-- 敵の真下TP + 宝箱の真下TP + モデル検索 + ホバー検索モード(統合版)
+local CONFIG = {
+    -- 敵追跡
+    Range          = 50,              -- 初期範囲(スタッド)
+    EnemyDepth     = 6,               -- 敵の何スタッド下に行くか
+    EnemyKey       = Enum.KeyCode.G,  -- 敵追跡のON/OFFキー
+    IncludePlayers = false,           -- trueで他プレイヤーも対象
+    Noclip         = true,            -- 敵追跡中は壁・地面をすり抜ける
+    ShowRange      = true,            -- 範囲の球を表示するか
+    ScanInterval   = 0.3,             -- ターゲット再検索の間隔(秒)
+    -- 宝箱
+    ChestDepth     = 6,               -- 宝箱の何スタッド下に行くか
+    ChestStay      = 0.3,             -- 宝箱の真下にいる時間(秒)
+    ChestKey       = Enum.KeyCode.H,  -- 宝箱TPのON/OFFキー
+    MaxDistance    = 1000,            -- これより遠い宝箱は無視
+    ChestKeywords  = { "chest", "宝箱", "treasure" },
+    -- 宝箱: 周りのモブが全滅してからTPする
+    WaitForClear   = true,   -- falseにすると従来どおり出現直後にTP
+    ChestOpenMode  = "walk", -- "walk"=近くにTPして歩いて開ける / "direct"=宝箱へ直接TP
+    ChestApproachDist = 12,  -- walk: 宝箱から何スタッド手前にTPするか
+    ChestOpenWait  = 4,      -- walk: 開くまで歩き続ける最大秒数
+    ChestOpenOffsetY = 0,    -- 開けるとき宝箱の何スタッド上にTPするか(0=宝箱の中心。埋まるなら2~3に)
+    ChestMobRadius = 60,     -- 宝箱からこの距離以内のモブを「周りのモブ」とみなす
+    SpawnGrace     = 4,      -- 宝箱出現後、モブが1体も見えなくてもこの秒数は待つ(モブは後からわくため)
+    ClearConfirm   = 1,      -- モブ0体がこの秒数続いたら全滅とみなす(波の切れ目対策)
+    ChestTimeout   = 180,    -- この秒数待っても条件を満たさなければ諦める
+    OwnerCheck     = true,   -- Owner属性が自分のUserIdでない宝箱は無視(動かなければfalseに)
+    LockAttr       = "ChestState",  -- 施錠状態の属性名
+    LockValue      = "locked",      -- 施錠中の値
+    LockFallback   = 5,      -- モブ0体でも施錠のままなら、最大この秒数だけ解錠を待つ
+    MaxRetries     = 3,      -- TPしても開かなかったときの再挑戦回数
+    -- 自動周回(前進 → 宝箱部屋で停止 → モブ全滅 → 開封 → カード選択 → 前進)
+    AutoKey        = Enum.KeyCode.N,  -- 自動周回のON/OFFキー
+    AdvanceMode    = "long",          -- "long"=床の長い辺の向きに進む / "axis"=AdvanceAxis方向に進む
+    AdvanceAxis    = Vector3.new(0, 0, -1),   -- axisモードの進行方向(ワールド座標)
+    AdvanceDepth   = 6,               -- (空中方式に変更したため現在は未使用)
+    AdvanceHeight  = 10,              -- 進んでいる間、床の上面より何スタッド上に浮くか(マイナスなら地中)
+    AutoMobTP      = true,            -- 自動周回中、モブの真下へTPして戦う
+    AdvanceSpeed   = 0,               -- 前進速度(スタッド/秒)。0=WalkSpeedと同じ
+    MapKeywords    = { "plate" },     -- マップの床の名前(小文字・部分一致)
+    MinFloorArea   = 400,             -- これより小さい床パーツは無視(横x奥行き)
+    ArriveMargin   = 4,               -- 床の端までこの距離に来たら止まる
+    -- カード選択
+    CardPriority   = {},              -- 優先キーワード(上ほど優先)。カードの文字に含まれるものを選ぶ
+    CardPathContains = "",            -- カードボタンのパスに含まれる文字(GUI検索で確認)。空=全ボタン対象
+    CardFallback   = true,            -- 優先に1つも一致しないとき一番左のカードを選ぶ(パス指定時のみ)
+    CardWait       = 8,               -- 宝箱を開けてからカードが出るのを待つ最大秒数
+    CardMaxPicks   = 3,               -- 1回の宝箱で押す最大回数
+    -- 武器の持ち替え(宝箱フェーズの間だけ剣、終わったらつるはし)
+    WeaponSwap     = true,            -- falseで持ち替えなし
+    PickaxeKey     = Enum.KeyCode.One,  -- つるはしのキー
+    SwordKey       = Enum.KeyCode.Two,  -- 剣のキー
+    -- 鉱石回収(壁に当たったら周りの鉱石へTPして掘り、なくなったら壁へ戻る)
+    OreCollect     = true,            -- 鉱石回収のON/OFF(初期値)
+    OreKeywords    = {},              -- 鉱石の名前(部分一致・大小文字無視)。空だと動かない。GUIの「鉱石の名前」でも登録できる
+    OreRadius      = 100,             -- 壁に当たった場所からこの距離以内の鉱石を掘る
+    OreOffsetY     = 0,               -- 鉱石の何スタッド上にTPするか(0=鉱石の中心)
+    OreStay        = 6,               -- 1個の鉱石で待つ最大秒数(掘れたらすぐ次へ。掘れなければ飛ばす)
+    OreRecheck     = 3,               -- 鉱石が見つからなかったとき、次に調べるまでの秒数
+    OreStallTime   = 1.5,             -- (旧: 現在は WallStallTime を使うので未使用)
+    -- ステージ周回(壁に当たって止まったら、ステージの最初へ戻ってまた壁まで進む。ステージの境目は画面のDEPTHの数値の変化で検知)
+    StageSweep     = true,            -- ON/OFF(初期値)
+    WallStallTime  = 1,               -- 壁に当たって、この秒数ほとんど進めなければステージの最初へ戻る
+    DepthKeyword   = "depth",         -- 画面の深さ表示を探すときの文字(小文字)
+    -- GUIボタン検索
+    GuiInspectKey  = Enum.KeyCode.K,  -- GUIボタン検索のON/OFFキー
+    GuiShowAll     = false,           -- trueならボタン以外のGUIも表示
+    -- 検索
+    SearchLimit    = 100,             -- 検索結果の最大件数
+}
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+local player = Players.LocalPlayer
+
+-- 二重実行防止
+if getgenv and getgenv().__UnderTP then getgenv().__UnderTP() end
+
+local conns, alive = {}, true
+local enemyOn, chestOn, busy = false, false, false
+local chestInfo = ""   -- 宝箱の待機状況(ステータス表示用)
+local walking = false    -- 宝箱へ歩いている間はノークリップを切る
+local oreWorking = false -- 鉱石回収中(自動前進・敵追跡を止めてノークリップ)
+local advancing = false  -- 自動前進中はノークリップ
+local autoOn, autoInfo = false, ""   -- 自動周回
+local cardDeadline, cardPicks = 0, 0 -- カード選択フェーズの期限と押した回数
+local target = nil
+
+-- 設定値
+local range, enemyDepth = CONFIG.Range, CONFIG.EnemyDepth
+local chestDepth, chestStay = CONFIG.ChestDepth, CONFIG.ChestStay
+local priority, prioIndex, fallback = {}, {}, true
+local keywords = table.clone(CONFIG.ChestKeywords)
+local cardPriority = table.clone(CONFIG.CardPriority)
+local cardPath = CONFIG.CardPathContains
+
+-- カード選択が実際に動く設定か(優先キーワードもパス指定もないと何も選べないので待つ意味がない)
+local function cardEnabled()
+    return #cardPriority > 0 or (CONFIG.CardFallback and cardPath ~= "")
+end
+
+-- 自動周回の設定(GUIで変更・保存される)
+local advSpeed, advHeight = CONFIG.AdvanceSpeed, CONFIG.AdvanceHeight
+local autoMobTP = CONFIG.AutoMobTP
+local oreOn, oreKeywords = CONFIG.OreCollect, table.clone(CONFIG.OreKeywords)
+local sweepOn = CONFIG.StageSweep
+-- 敵の真下TPが動くか: 通常の敵追跡(G) か、自動周回中のモブTP
+local function enemyActive()
+    return enemyOn or (autoOn and autoMobTP)
+end
+
+-- 自動周回だけで動いているとき(Gキーが切れているとき)は、宝箱の部屋のモブだけを対象にする
+local roomCheck = function(pos) return true end   -- 宝箱監視のあとで本実装に差し替え
+local function allowedTarget(pos)
+    if enemyOn then return true end   -- 通常の敵追跡(G)は今までどおり
+    return roomCheck(pos)
+end
+
+local function rebuildIndex()
+    prioIndex = {}
+    for i, name in ipairs(priority) do prioIndex[name] = i end
+end
+
+-- ===== 保存 / 読み込み(ユーザーIDごと) =====
+local FILE = "UnderEnemyChestTP_" .. player.UserId .. ".json"
+
+local function save()
+    pcall(function()
+        writefile(FILE, HttpService:JSONEncode({
+            range = range, enemyDepth = enemyDepth,
+            priority = priority, fallback = fallback,
+            chestDepth = chestDepth, chestStay = chestStay,
+            keywords = keywords,
+            cardPriority = cardPriority, cardPath = cardPath,
+            advSpeed = advSpeed, advHeight = advHeight, autoMobTP = autoMobTP,
+            oreOn = oreOn, oreKeywords = oreKeywords, sweepOn = sweepOn,
+        }))
+    end)
+end
+
+pcall(function()
+    if isfile and isfile(FILE) then
+        local d = HttpService:JSONDecode(readfile(FILE))
+        if tonumber(d.range) then range = tonumber(d.range) end
+        if tonumber(d.enemyDepth) then enemyDepth = tonumber(d.enemyDepth) end
+        if type(d.priority) == "table" then priority = d.priority end
+        if type(d.fallback) == "boolean" then fallback = d.fallback end
+        if tonumber(d.chestDepth) then chestDepth = tonumber(d.chestDepth) end
+        if tonumber(d.chestStay) then chestStay = tonumber(d.chestStay) end
+        if type(d.keywords) == "table" then keywords = d.keywords end
+        if type(d.cardPriority) == "table" then cardPriority = d.cardPriority end
+        if type(d.cardPath) == "string" then cardPath = d.cardPath end
+        if tonumber(d.advSpeed) then advSpeed = tonumber(d.advSpeed) end
+        if tonumber(d.advHeight) then advHeight = tonumber(d.advHeight) end
+        if type(d.autoMobTP) == "boolean" then autoMobTP = d.autoMobTP end
+        if type(d.oreOn) == "boolean" then oreOn = d.oreOn end
+        if type(d.sweepOn) == "boolean" then sweepOn = d.sweepOn end
+        if type(d.oreKeywords) == "table" then oreKeywords = d.oreKeywords end
+    end
+end)
+rebuildIndex()
+
+-- ===== 範囲表示の球 =====
+local sphere = Instance.new("Part")
+sphere.Shape = Enum.PartType.Ball
+sphere.Anchored = true
+sphere.CanCollide = false
+sphere.CanQuery = false
+sphere.CanTouch = false
+sphere.CastShadow = false
+sphere.Material = Enum.Material.Neon
+sphere.Color = Color3.fromRGB(255, 60, 60)
+sphere.Transparency = 0.85
+if CONFIG.ShowRange then sphere.Parent = workspace end
+
+local function updateSphere()
+    sphere.Size = Vector3.new(range * 2, range * 2, range * 2)
+end
+
+-- ===== 敵(Humanoid)キャッシュ =====
+local humans = {}
+local rootCache = setmetatable({}, { __mode = "k" })
+
+for _, d in ipairs(workspace:GetDescendants()) do
+    if d:IsA("Humanoid") then humans[d] = true end
+end
+table.insert(conns, workspace.DescendantAdded:Connect(function(d)
+    if d:IsA("Humanoid") then humans[d] = true end
+end))
+table.insert(conns, workspace.DescendantRemoving:Connect(function(d)
+    if d:IsA("Humanoid") then humans[d] = nil; rootCache[d] = nil end
+end))
+
+local function enemyRoot(hum)
+    local r = rootCache[hum]
+    if r and r.Parent then return r end
+    local m = hum.Parent
+    r = m and (m:FindFirstChild("HumanoidRootPart") or m.PrimaryPart)
+    rootCache[hum] = r
+    return r
+end
+
+local function isEnemy(hum)
+    local model = hum.Parent
+    if not model or not model:IsA("Model") then return false end
+    if model == player.Character then return false end
+    if hum.Health <= 0 then return false end
+    if not CONFIG.IncludePlayers and Players:GetPlayerFromCharacter(model) then
+        return false
+    end
+    return true
+end
+
+local function tierOf(hum)
+    return prioIndex[hum.Parent.Name] or math.huge
+end
+
+local function findBest(myPos)
+    local best, bestTier, bestDist
+    for d in pairs(humans) do
+        if isEnemy(d) then
+            local tier = tierOf(d)
+            if tier ~= math.huge or fallback then
+                local r = enemyRoot(d)
+                if r then
+                    local dist = (r.Position - myPos).Magnitude
+                    if dist <= range and allowedTarget(r.Position) then
+                        if not best or tier < bestTier
+                            or (tier == bestTier and dist < bestDist) then
+                            best, bestTier, bestDist = d, tier, dist
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best, bestTier
+end
+
+local function findNearestAny(myPos)
+    local best, bestDist
+    for d in pairs(humans) do
+        if isEnemy(d) then
+            local r = enemyRoot(d)
+            if r then
+                local dist = (r.Position - myPos).Magnitude
+                if not bestDist or dist < bestDist then
+                    best, bestDist = d, dist
+                end
+            end
+        end
+    end
+    return best
+end
+
+-- ===== 自分のキャラのパーツ(ノークリップ用) =====
+local charParts = {}
+local function hookChar(char)
+    charParts = {}
+    for _, p in ipairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then table.insert(charParts, p) end
+    end
+    table.insert(conns, char.DescendantAdded:Connect(function(d)
+        if d:IsA("BasePart") then table.insert(charParts, d) end
+    end))
+end
+if player.Character then hookChar(player.Character) end
+table.insert(conns, player.CharacterAdded:Connect(hookChar))
+
+-- ===== 宝箱判定 =====
+local function nameMatches(name)
+    name = string.lower(name)
+    for _, k in ipairs(keywords) do
+        if k ~= "" and string.find(name, string.lower(k), 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function isChest(d)
+    if not (d:IsA("Model") or d:IsA("BasePart")) then return false end
+    if not nameMatches(d.Name) then return false end
+    if d:IsA("Model") and d:FindFirstChildWhichIsA("Humanoid") then return false end
+    local p = d.Parent
+    while p and p ~= workspace do
+        if p:IsA("Model") and nameMatches(p.Name) then return false end
+        p = p.Parent
+    end
+    return true
+end
+
+local function objPos(d)
+    if d:IsA("BasePart") then return d.Position end
+    local ok, cf = pcall(function() return d:GetPivot() end)
+    return ok and cf.Position or nil
+end
+
+-- ===== モデル情報の収集(検索用) =====
+local function collectInfo(m, withMesh)
+    local lines = {}
+    local blobParts = { m.Name, m:GetFullName() }
+    local hum = m:FindFirstChildWhichIsA("Humanoid")
+
+    table.insert(lines, "名前: " .. m.Name)
+    if hum then
+        if hum.DisplayName ~= "" and hum.DisplayName ~= m.Name then
+            table.insert(lines, "表示名: " .. hum.DisplayName)
+            table.insert(blobParts, hum.DisplayName)
+        end
+        table.insert(lines, string.format("HP: %d / %d", hum.Health, hum.MaxHealth))
+    end
+    table.insert(lines, "クラス: " .. m.ClassName)
+    table.insert(lines, "パス: " .. m:GetFullName())
+
+    -- 属性(Attributes)
+    local attrs = {}
+    local function addAttrs(inst)
+        for k, v in pairs(inst:GetAttributes()) do
+            table.insert(attrs, k .. "=" .. tostring(v))
+        end
+    end
+    addAttrs(m)
+    if hum then addAttrs(hum) end
+    if #attrs > 0 then
+        table.insert(lines, "属性: " .. table.concat(attrs, ", "))
+        table.insert(blobParts, table.concat(attrs, " "))
+    end
+
+    -- ID系の値オブジェクト
+    local vals = {}
+    for _, c in ipairs(m:GetChildren()) do
+        if c:IsA("StringValue") or c:IsA("IntValue") or c:IsA("NumberValue") then
+            table.insert(vals, c.Name .. "=" .. tostring(c.Value))
+        end
+    end
+    if #vals > 0 then
+        table.insert(lines, "値: " .. table.concat(vals, ", "))
+        table.insert(blobParts, table.concat(vals, " "))
+    end
+
+    -- メッシュID(モデルID)
+    if withMesh then
+        local seen, meshes, scanned = {}, {}, 0
+        for _, d in ipairs(m:GetDescendants()) do
+            scanned += 1
+            if scanned > 300 or #meshes >= 6 then break end
+            local id
+            if d:IsA("MeshPart") or d:IsA("SpecialMesh") then id = d.MeshId end
+            if id and id ~= "" and not seen[id] then
+                seen[id] = true
+                table.insert(meshes, id)
+            end
+        end
+        if #meshes > 0 then
+            table.insert(lines, "メッシュID: " .. table.concat(meshes, ", "))
+            table.insert(blobParts, table.concat(meshes, " "))
+        end
+    end
+
+    return {
+        text = table.concat(lines, "\n"),
+        blob = string.lower(table.concat(blobParts, " ")),
+    }
+end
+
+-- ===== GUI =====
+local gui = Instance.new("ScreenGui")
+gui.Name = "UnderTP"
+gui.ResetOnSpawn = false
+gui.Parent = (gethui and gethui()) or player:WaitForChild("PlayerGui")
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.fromOffset(250, 500)
+frame.Position = UDim2.new(0, 20, 0.15, 0)
+frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Parent = gui
+
+local function label(parent, text, x, y, w)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.fromOffset(w or 100, 20)
+    l.Position = UDim2.fromOffset(x, y)
+    l.BackgroundTransparency = 1
+    l.TextColor3 = Color3.new(1, 1, 1)
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Font = Enum.Font.SourceSans
+    l.TextSize = 16
+    l.Text = text
+    l.Parent = parent
+    return l
+end
+
+local function button(parent, text, x, y, w, h)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.fromOffset(w, h)
+    b.Position = UDim2.fromOffset(x, y)
+    b.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.BorderSizePixel = 0
+    b.Font = Enum.Font.SourceSans
+    b.TextSize = 15
+    b.Text = text
+    b.Parent = parent
+    return b
+end
+
+local function textbox(parent, x, y, w)
+    local t = Instance.new("TextBox")
+    t.Size = UDim2.fromOffset(w, 22)
+    t.Position = UDim2.fromOffset(x, y)
+    t.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+    t.TextColor3 = Color3.new(1, 1, 1)
+    t.BorderSizePixel = 0
+    t.ClearTextOnFocus = false
+    t.Parent = parent
+    return t
+end
+
+local function scrollList(parent, y, h)
+    local s = Instance.new("ScrollingFrame")
+    s.Size = UDim2.fromOffset(234, h)
+    s.Position = UDim2.fromOffset(8, y)
+    s.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    s.BorderSizePixel = 0
+    s.ScrollBarThickness = 4
+    s.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    s.CanvasSize = UDim2.new()
+    s.Parent = parent
+    local l = Instance.new("UIListLayout")
+    l.Padding = UDim.new(0, 2)
+    l.Parent = s
+    return s
+end
+
+local function newRow(listFrame)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, -6, 0, 24)
+    row.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+    row.BorderSizePixel = 0
+    row.Parent = listFrame
+    return row
+end
+
+local function rowLabel(row, text, w)
+    local nl = Instance.new("TextLabel")
+    nl.Size = UDim2.fromOffset(w, 24)
+    nl.Position = UDim2.fromOffset(4, 0)
+    nl.BackgroundTransparency = 1
+    nl.TextColor3 = Color3.new(1, 1, 1)
+    nl.TextXAlignment = Enum.TextXAlignment.Left
+    nl.TextTruncate = Enum.TextTruncate.AtEnd
+    nl.Font = Enum.Font.SourceSans
+    nl.TextSize = 15
+    nl.Text = text
+    nl.Parent = row
+end
+
+local function rowBtn(row, txt, x, fn)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.fromOffset(24, 20)
+    b.Position = UDim2.fromOffset(x, 2)
+    b.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.BorderSizePixel = 0
+    b.Text = txt
+    b.Parent = row
+    b.MouseButton1Click:Connect(fn)
+end
+
+label(frame, "敵TP + 宝箱TP + 検索", 8, 4, 234)
+local status = label(frame, "", 8, 24, 234)
+
+local tabEnemy = button(frame, "敵", 8, 48, 56, 24)
+local tabChest = button(frame, "宝箱", 68, 48, 56, 24)
+local tabSearch = button(frame, "検索", 128, 48, 56, 24)
+local tabAuto = button(frame, "自動", 188, 48, 54, 24)
+
+local function newPage()
+    local p = Instance.new("Frame")
+    p.Size = UDim2.fromOffset(250, 420)
+    p.Position = UDim2.fromOffset(0, 78)
+    p.BackgroundTransparency = 1
+    p.Visible = false
+    p.Parent = frame
+    return p
+end
+local ePage, cPage, sPage, aPage = newPage(), newPage(), newPage(), newPage()
+
+local function showTab(name)
+    ePage.Visible = (name == "enemy")
+    cPage.Visible = (name == "chest")
+    sPage.Visible = (name == "search")
+    aPage.Visible = (name == "auto")
+    local on, off = Color3.fromRGB(90, 90, 140), Color3.fromRGB(60, 60, 60)
+    tabEnemy.BackgroundColor3 = ePage.Visible and on or off
+    tabChest.BackgroundColor3 = cPage.Visible and on or off
+    tabSearch.BackgroundColor3 = sPage.Visible and on or off
+    tabAuto.BackgroundColor3 = aPage.Visible and on or off
+end
+tabEnemy.MouseButton1Click:Connect(function() showTab("enemy") end)
+tabChest.MouseButton1Click:Connect(function() showTab("chest") end)
+tabSearch.MouseButton1Click:Connect(function() showTab("search") end)
+tabAuto.MouseButton1Click:Connect(function() showTab("auto") end)
+showTab("enemy")
+
+-- --- 敵ページ ---
+label(ePage, "範囲:", 8, 0, 40)
+local rangeBox = textbox(ePage, 48, 0, 60)
+label(ePage, "深さ:", 125, 0, 40)
+local eDepthBox = textbox(ePage, 165, 0, 60)
+local eToggleBtn = button(ePage, "", 8, 28, 234, 26)
+local fallbackBtn = button(ePage, "", 8, 58, 234, 26)
+local addBtn = button(ePage, "一番近いモブを優先リストに追加", 8, 88, 234, 26)
+label(ePage, "優先リスト(上ほど優先)", 8, 118, 234)
+local pList = scrollList(ePage, 140, 190)
+
+-- --- 宝箱ページ ---
+label(cPage, "深さ:", 8, 0, 40)
+local cDepthBox = textbox(cPage, 48, 0, 55)
+label(cPage, "待ち(秒):", 115, 0, 60)
+local stayBox = textbox(cPage, 175, 0, 55)
+local cToggleBtn = button(cPage, "", 8, 28, 234, 26)
+label(cPage, "宝箱キーワード", 8, 58, 234)
+local kwBox = textbox(cPage, 8, 80, 150)
+local kwAddBtn = button(cPage, "追加", 164, 79, 78, 24)
+local nearBtn = button(cPage, "近くのモデル名を入力欄に入れる", 8, 108, 234, 24)
+local kList = scrollList(cPage, 138, 192)
+
+-- --- 検索ページ ---
+label(sPage, "検索:", 8, 0, 40)
+local searchBox = textbox(sPage, 48, 0, 194)
+searchBox.PlaceholderText = "名前・ID・パスの一部(空欄で全件)"
+local modeBtn = button(sPage, "", 8, 27, 112, 24)
+local searchBtn = button(sPage, "検索", 124, 27, 118, 24)
+local sList = scrollList(sPage, 56, 118)
+
+local detailBox = Instance.new("TextBox")
+detailBox.Size = UDim2.fromOffset(234, 100)
+detailBox.Position = UDim2.fromOffset(8, 178)
+detailBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+detailBox.TextColor3 = Color3.new(1, 1, 1)
+detailBox.BorderSizePixel = 0
+detailBox.Font = Enum.Font.SourceSans
+detailBox.TextSize = 13
+detailBox.TextXAlignment = Enum.TextXAlignment.Left
+detailBox.TextYAlignment = Enum.TextYAlignment.Top
+detailBox.TextWrapped = true
+detailBox.MultiLine = true
+detailBox.ClearTextOnFocus = false
+detailBox.TextEditable = false
+detailBox.Text = "結果をクリックすると詳細が出ます"
+detailBox.Parent = sPage
+
+local copyBtn = button(sPage, "コピー", 8, 284, 74, 24)
+local toPrioBtn = button(sPage, "優先に追加", 86, 284, 74, 24)
+local toKwBtn = button(sPage, "宝箱KWに追加", 164, 284, 78, 24)
+
+-- ===== リスト再構築 =====
+local function rebuildPriorityList()
+    for _, c in ipairs(pList:GetChildren()) do
+        if c:IsA("Frame") then c:Destroy() end
+    end
+    for i, name in ipairs(priority) do
+        local row = newRow(pList)
+        rowLabel(row, i .. ". " .. name, 140)
+        rowBtn(row, "▲", 146, function()
+            if i > 1 then
+                priority[i], priority[i - 1] = priority[i - 1], priority[i]
+                rebuildIndex(); save(); rebuildPriorityList()
+            end
+        end)
+        rowBtn(row, "▼", 172, function()
+            if i < #priority then
+                priority[i], priority[i + 1] = priority[i + 1], priority[i]
+                rebuildIndex(); save(); rebuildPriorityList()
+            end
+        end)
+        rowBtn(row, "✕", 198, function()
+            table.remove(priority, i)
+            rebuildIndex(); save(); rebuildPriorityList()
+        end)
+    end
+end
+
+local function rebuildKeywordList()
+    for _, c in ipairs(kList:GetChildren()) do
+        if c:IsA("Frame") then c:Destroy() end
+    end
+    for i, k in ipairs(keywords) do
+        local row = newRow(kList)
+        rowLabel(row, k, 190)
+        rowBtn(row, "✕", 200, function()
+            table.remove(keywords, i)
+            save(); rebuildKeywordList()
+        end)
+    end
+end
+
+-- ===== 状態表示 =====
+local searchMobsOnly = true
+local msgToken = 0
+
+local function statusLine()
+    if chestInfo ~= "" then return "宝箱: " .. chestInfo end
+    if autoInfo ~= "" then return autoInfo end
+    return "敵:" .. (enemyOn and "ON" or "OFF") .. " / 宝箱:" .. (chestOn and (autoOn and "ON" or "自動のみ") or "OFF")
+end
+
+local function refresh()
+    if not busy and msgToken == 0 then
+        status.Text = statusLine()
+    end
+    eToggleBtn.Text = "敵追跡 " .. (enemyOn and "OFFにする" or "ONにする") .. " [" .. CONFIG.EnemyKey.Name .. "]"
+    cToggleBtn.Text = "宝箱TP " .. (chestOn and "OFFにする" or "ONにする") .. " [" .. CONFIG.ChestKey.Name .. "]"
+    fallbackBtn.Text = "リスト外の敵も狙う: " .. (fallback and "ON" or "OFF")
+    modeBtn.Text = "対象: " .. (searchMobsOnly and "モブのみ" or "全モデル")
+    rangeBox.Text = tostring(range)
+    eDepthBox.Text = tostring(enemyDepth)
+    cDepthBox.Text = tostring(chestDepth)
+    stayBox.Text = tostring(chestStay)
+    updateSphere()
+end
+
+local function flash(text)
+    msgToken += 1
+    local my = msgToken
+    status.Text = text
+    task.delay(1.5, function()
+        if my == msgToken then msgToken = 0; refresh() end
+    end)
+end
+
+local function setNum(box, min, apply)
+    local n = tonumber(box.Text)
+    if n and n >= min then apply(n) end
+    save(); refresh()
+end
+
+local function toggleEnemy()
+    enemyOn = not enemyOn
+    target = nil
+    refresh()
+end
+
+local function toggleChest()
+    chestOn = not chestOn
+    refresh()
+end
+
+-- ===== 敵ページのイベント =====
+eToggleBtn.MouseButton1Click:Connect(toggleEnemy)
+fallbackBtn.MouseButton1Click:Connect(function()
+    fallback = not fallback
+    save(); refresh()
+end)
+rangeBox.FocusLost:Connect(function()
+    setNum(rangeBox, 1, function(n) range = n end)
+end)
+eDepthBox.FocusLost:Connect(function()
+    setNum(eDepthBox, 0, function(n) enemyDepth = n end)
+end)
+
+addBtn.MouseButton1Click:Connect(function()
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local hum = findNearestAny(hrp.Position)
+    if not hum then flash("近くにモブがいません"); return end
+    local name = hum.Parent.Name
+    if prioIndex[name] then flash("「" .. name .. "」は登録済み"); return end
+    table.insert(priority, name)
+    rebuildIndex(); save(); rebuildPriorityList()
+    flash("追加: " .. name)
+end)
+
+-- ===== 宝箱ページのイベント =====
+cToggleBtn.MouseButton1Click:Connect(toggleChest)
+cDepthBox.FocusLost:Connect(function()
+    setNum(cDepthBox, 0, function(n) chestDepth = n end)
+end)
+stayBox.FocusLost:Connect(function()
+    setNum(stayBox, 0, function(n) chestStay = n end)
+end)
+
+kwAddBtn.MouseButton1Click:Connect(function()
+    local k = kwBox.Text
+    if k == "" then return end
+    if table.find(keywords, k) then flash("登録済み"); return end
+    table.insert(keywords, k)
+    kwBox.Text = ""
+    save(); rebuildKeywordList()
+    flash("追加: " .. k)
+end)
+
+nearBtn.MouseButton1Click:Connect(function()
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local best, bestDist
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d:IsA("Model") and not d:FindFirstChildWhichIsA("Humanoid") then
+            local pos = objPos(d)
+            if pos then
+                local dist = (pos - hrp.Position).Magnitude
+                if dist < 30 and (not bestDist or dist < bestDist) then
+                    best, bestDist = d, dist
+                end
+            end
+        end
+    end
+    if best then
+        kwBox.Text = best.Name
+        flash("入力欄に: " .. best.Name)
+    else
+        flash("近くにモデルがありません")
+    end
+end)
+
+-- ===== 検索ページのロジック =====
+local selected, selectedText = nil, ""
+local highlight
+
+local function selectResult(model, info, dist)
+    selected = model
+    selectedText = info.text .. "\n距離: " .. math.floor(dist) .. " スタッド"
+    detailBox.Text = selectedText
+    if highlight then highlight:Destroy() highlight = nil end
+    pcall(function()
+        highlight = Instance.new("Highlight")
+        highlight.Adornee = model
+        highlight.FillColor = Color3.fromRGB(255, 220, 0)
+        highlight.FillTransparency = 0.5
+        highlight.Parent = gui
+    end)
+end
+
+local function runSearch()
+    for _, c in ipairs(sList:GetChildren()) do
+        if c:IsA("TextButton") then c:Destroy() end
+    end
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local myPos = hrp and hrp.Position or Vector3.zero
+    local q = string.lower(searchBox.Text)
+    local results = {}
+
+    local function consider(m)
+        local pos = objPos(m)
+        if not pos then return end
+        local info = collectInfo(m, searchMobsOnly)
+        if q == "" or string.find(info.blob, q, 1, true) then
+            table.insert(results, { model = m, info = info, dist = (pos - myPos).Magnitude })
+        end
+    end
+
+    if searchMobsOnly then
+        for hum in pairs(humans) do
+            local m = hum.Parent
+            if m and m:IsA("Model") and m ~= player.Character
+                and (CONFIG.IncludePlayers or not Players:GetPlayerFromCharacter(m)) then
+                consider(m)
+            end
+        end
+    else
+        for _, d in ipairs(workspace:GetDescendants()) do
+            if d:IsA("Model") and d ~= player.Character
+                and not Players:GetPlayerFromCharacter(d) then
+                consider(d)
+            end
+        end
+    end
+
+    table.sort(results, function(a, b) return a.dist < b.dist end)
+
+    for i = 1, math.min(#results, CONFIG.SearchLimit) do
+        local r = results[i]
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(1, -6, 0, 22)
+        b.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+        b.TextColor3 = Color3.new(1, 1, 1)
+        b.BorderSizePixel = 0
+        b.Font = Enum.Font.SourceSans
+        b.TextSize = 14
+        b.TextXAlignment = Enum.TextXAlignment.Left
+        b.TextTruncate = Enum.TextTruncate.AtEnd
+        b.Text = " " .. r.model.Name .. "  (" .. math.floor(r.dist) .. ")"
+        b.Parent = sList
+        b.MouseButton1Click:Connect(function()
+            selectResult(r.model, r.info, r.dist)
+        end)
+    end
+
+    flash(#results .. "件ヒット" .. (#results > CONFIG.SearchLimit and "(上位" .. CONFIG.SearchLimit .. "件表示)" or ""))
+end
+
+modeBtn.MouseButton1Click:Connect(function()
+    searchMobsOnly = not searchMobsOnly
+    refresh()
+end)
+searchBtn.MouseButton1Click:Connect(runSearch)
+searchBox.FocusLost:Connect(function(enter)
+    if enter then runSearch() end
+end)
+
+copyBtn.MouseButton1Click:Connect(function()
+    if selectedText == "" then flash("先に結果を選んでください"); return end
+    local ok = pcall(function() setclipboard(selectedText) end)
+    flash(ok and "コピーしました" or "この環境ではコピー不可")
+end)
+
+toPrioBtn.MouseButton1Click:Connect(function()
+    if not selected then flash("先に結果を選んでください"); return end
+    local name = selected.Name
+    if prioIndex[name] then flash("「" .. name .. "」は登録済み"); return end
+    table.insert(priority, name)
+    rebuildIndex(); save(); rebuildPriorityList()
+    flash("優先に追加: " .. name)
+end)
+
+toKwBtn.MouseButton1Click:Connect(function()
+    if not selected then flash("先に結果を選んでください"); return end
+    local name = selected.Name
+    if table.find(keywords, name) then flash("「" .. name .. "」は登録済み"); return end
+    table.insert(keywords, name)
+    save(); rebuildKeywordList()
+    flash("宝箱KWに追加: " .. name)
+end)
+
+-- ===== キー入力 =====
+table.insert(conns, UIS.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == CONFIG.EnemyKey then
+        toggleEnemy()
+    elseif input.KeyCode == CONFIG.ChestKey then
+        toggleChest()
+    elseif input.KeyCode == Enum.KeyCode.RightBracket then
+        range += 10; save(); refresh()
+    elseif input.KeyCode == Enum.KeyCode.LeftBracket then
+        range = math.max(10, range - 10); save(); refresh()
+    end
+end))
+
+-- ===== 宝箱の出現を検知(出現しただけではTPせず、周りのモブ全滅を待つ) =====
+local pending, pendingSet = {}, {}   -- 待機中の宝箱
+
+-- 待機中の宝箱から ChestMobRadius 以内 = 宝箱の部屋(宝箱が出ていない間は部屋なし)
+roomCheck = function(pos)
+    for _, e in ipairs(pending) do
+        local cp = e.obj.Parent and objPos(e.obj)
+        if cp and (cp - pos).Magnitude <= CONFIG.ChestMobRadius then return true end
+    end
+    return false
+end
+
+table.insert(conns, workspace.DescendantAdded:Connect(function(d)
+    if chestOn and autoOn and not pendingSet[d] and isChest(d) then
+        pendingSet[d] = true
+        table.insert(pending, { obj = d, t0 = os.clock(), seenMob = false, tries = 0 })
+    end
+end))
+
+-- 宝箱の周り(ChestMobRadius以内)にいるモブの数
+local function mobsNear(pos)
+    local n = 0
+    for d in pairs(humans) do
+        if isEnemy(d) then
+            local r = enemyRoot(d)
+            if r and (r.Position - pos).Magnitude <= CONFIG.ChestMobRadius then
+                n += 1
+            end
+        end
+    end
+    return n
+end
+
+local function isLocked(obj)
+    local v = obj:GetAttribute(CONFIG.LockAttr)
+    return v ~= nil and string.lower(tostring(v)) == string.lower(CONFIG.LockValue)
+end
+
+local function isMine(obj)
+    if not CONFIG.OwnerCheck then return true end
+    local o = obj:GetAttribute("Owner")
+    return o == nil or tonumber(o) == player.UserId
+end
+
+-- 戻り値: "drop"(もう扱わない) / "go"(今TPする) / nil(待機), 表示用テキスト
+local function evaluate(e, now)
+    local d = e.obj
+    if not d.Parent then return "drop" end                       -- 宝箱が消えた(開いた)
+    if now - e.t0 > CONFIG.ChestTimeout then return "drop" end   -- 諦め
+    if not isMine(d) then return "drop" end                      -- 他人の宝箱
+
+    local pos = objPos(d)
+    if not pos then return nil, "準備中" end
+
+    -- TP後の確認(開いたか?)
+    if e.nextTry then
+        if now < e.nextTry then return nil, "開錠確認中" end
+        if not CONFIG.WaitForClear or not isLocked(d) or e.tries >= CONFIG.MaxRetries then
+            return "drop"
+        end
+        e.nextTry, e.clearSince = nil, nil   -- まだ施錠 → もう一度待ってから再挑戦
+    end
+
+    if CONFIG.WaitForClear then
+        local n = mobsNear(pos)
+        if n > 0 then
+            e.seenMob, e.clearSince, e.tries = true, nil, 0
+            return nil, "モブ" .. n .. "体待ち"
+        end
+        -- 宝箱が先に出てモブが後からわくので、一度もモブを見ていない間は猶予を持たせる
+        if not e.seenMob and now - e.t0 < CONFIG.SpawnGrace then
+            return nil, "モブ出現待ち"
+        end
+        e.clearSince = e.clearSince or now
+        local clear = now - e.clearSince
+        if clear < CONFIG.ClearConfirm then return nil, "全滅確認中" end
+        -- モブ0でもまだ施錠中なら、少しだけ解錠を待つ
+        if isLocked(d) and clear < CONFIG.ClearConfirm + CONFIG.LockFallback then
+            return nil, "解錠待ち"
+        end
+    end
+
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil, "キャラ待ち" end
+    if (pos - hrp.Position).Magnitude > CONFIG.MaxDistance then return nil, "宝箱が遠い" end
+    return "go"
+end
+
+-- 宝箱を開ける(敵追跡は busy の間止まる)
+-- walk: 手前にTPして宝箱へ歩く(ゲームが「歩いて開ける」判定のため) / direct: 宝箱へ直接TP
+local function tpUnderChest(d)
+    busy = true
+    status.Text = "宝箱へ移動中..."
+    task.wait(0.1)   -- ノークリップが効くのを待つ
+
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local pos = d.Parent and objPos(d)
+    if pos and hrp then
+        local origin = hrp.CFrame
+        local rot = origin - origin.Position
+
+        if CONFIG.ChestOpenMode == "walk" and hum then
+            walking = true
+            pcall(function()
+                local dir = Vector3.new(origin.Position.X - pos.X, 0, origin.Position.Z - pos.Z)
+                dir = dir.Magnitude > 1 and dir.Unit or Vector3.new(1, 0, 0)
+                local from = pos + dir * CONFIG.ChestApproachDist + Vector3.new(0, 3, 0)
+                hrp.Anchored = false
+                hrp.CFrame = CFrame.new(from) * rot
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                local t0 = os.clock()
+                while os.clock() - t0 < CONFIG.ChestOpenWait do
+                    if not d.Parent then break end
+                    if os.clock() - t0 > 0.5 and d:GetAttribute(CONFIG.LockAttr) ~= nil
+                        and not isLocked(d) then break end
+                    hum:MoveTo(pos)
+                    task.wait(0.2)
+                end
+                task.wait(0.2)
+            end)
+            walking = false
+        else
+            pcall(function()
+                hrp.CFrame = CFrame.new(pos + Vector3.new(0, CONFIG.ChestOpenOffsetY, 0)) * rot
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hrp.Anchored = true
+                task.wait(chestStay)
+            end)
+        end
+
+        if hrp.Parent then
+            hrp.CFrame = origin
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.Anchored = false
+        end
+    end
+    busy = false
+    refresh()
+end
+
+-- ===== 武器の持ち替え(キー入力を送る。同じキーを2回押すと外れるので、持っている道具を見て判断) =====
+local updateWeapon
+do
+    local VIMw
+    pcall(function() VIMw = game:GetService("VirtualInputManager") end)
+    local learned = {}      -- キー -> そのキーで持てた道具の名前(最初に押したとき覚える)
+    local current = "pick"  -- 今の状態(最初はつるはしのつもりで、何もしない)
+    local working = false
+
+    local function equippedTool()
+        local c = player.Character
+        return c and c:FindFirstChildOfClass("Tool")
+    end
+    local function press(key)
+        VIMw:SendKeyEvent(true, key, false, game)
+        task.wait(0.05)
+        VIMw:SendKeyEvent(false, key, false, game)
+    end
+    local function equip(key)
+        local known = learned[key]
+        local cur = equippedTool()
+        if cur and known and cur.Name == known then return end   -- もう持っている
+        press(key)
+        -- 反映は遅れることがあるので、変化するまで最大0.8秒待つ(待つだけで、勝手に再度は押さない)
+        local t0, now = os.clock(), cur
+        repeat
+            task.wait(0.1)
+            now = equippedTool()
+        until now ~= cur or os.clock() - t0 > 0.8
+        -- 「持っていたのに空になった」= 同じ道具を持っていて外れた場合だけ、1回だけ押し直す
+        -- (何も持っていない状態から押して変化が見えないときは、押し直さない=素手にしない)
+        if cur and not now then
+            press(key)
+            t0 = os.clock()
+            repeat
+                task.wait(0.1)
+                now = equippedTool()
+            until now or os.clock() - t0 > 0.8
+        end
+        if now and not known then learned[key] = now.Name end
+    end
+
+    -- want: "sword" か "pick"。状態が変わったときだけキーを押す
+    function updateWeapon(want)
+        if not CONFIG.WeaponSwap or not VIMw or working or want == current then return end
+        working = true
+        task.spawn(function()
+            equip(want == "sword" and CONFIG.SwordKey or CONFIG.PickaxeKey)
+            current = want
+            working = false
+        end)
+    end
+end
+
+-- 待機中の宝箱を監視(待っている間は敵追跡は止めない)
+task.spawn(function()
+    while alive do
+        task.wait(0.2)
+        if not (chestOn and autoOn) then   -- 宝箱を開けるのは自動周回中だけ
+            if #pending > 0 then pending, pendingSet = {}, {} end
+            chestInfo = ""
+        else
+            local i, shown = 1, nil
+            while i <= #pending do
+                local e = pending[i]
+                local act, why = evaluate(e, os.clock())
+                if act == "drop" then
+                    if autoOn and cardEnabled() and (e.tries > 0 or not e.obj.Parent) then
+                        cardDeadline = os.clock() + CONFIG.CardWait
+                        cardPicks = 0
+                    end
+                    pendingSet[e.obj] = nil
+                    table.remove(pending, i)
+                elseif act == "go" then
+                    e.tries += 1
+                    tpUnderChest(e.obj)
+                    e.nextTry = os.clock() + 0.7   -- 解錠状態が反映されるのを待って確認
+                    i += 1
+                else
+                    shown = shown or why
+                    i += 1
+                end
+            end
+            if shown and #pending > 1 then shown = shown .. " 他" .. (#pending - 1) end
+            chestInfo = shown or ""
+        end
+        -- 宝箱フェーズ(待機中の宝箱がある間)だけ剣、終わったらつるはし
+        updateWeapon((chestOn and autoOn and #pending > 0) and "sword" or "pick")
+        if not busy and msgToken == 0 then status.Text = statusLine() end
+    end
+end)
+
+-- ===== 敵追跡のメインループ =====
+local lastScan = 0
+table.insert(conns, RunService.Heartbeat:Connect(function()
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    if CONFIG.ShowRange then sphere.CFrame = CFrame.new(hrp.Position) end
+    if not enemyActive() or busy or oreWorking then return end
+
+    local valid = false
+    if target and target.Parent and target.Health > 0 then
+        local r = enemyRoot(target)
+        if r and (r.Position - hrp.Position).Magnitude <= range + enemyDepth + 5
+            and allowedTarget(r.Position) then
+            valid = true
+        end
+    end
+    if not valid then target = nil end
+
+    local now = os.clock()
+    if now - lastScan > CONFIG.ScanInterval then
+        lastScan = now
+        local best, bestTier = findBest(hrp.Position)
+        if best and not (target and tierOf(target) == bestTier) then
+            target = best
+        end
+    end
+
+    if target then
+        local r = enemyRoot(target)
+        if r then
+            local pos = r.Position - Vector3.new(0, enemyDepth, 0)
+            local rot = hrp.CFrame - hrp.CFrame.Position
+            hrp.CFrame = CFrame.new(pos) * rot
+            hrp.AssemblyLinearVelocity = Vector3.zero
+        end
+    end
+end))
+
+-- ノークリップ(敵追跡中 or 宝箱TP中)
+table.insert(conns, RunService.Stepped:Connect(function()
+    if walking then return end
+    if not ((enemyActive() and CONFIG.Noclip) or busy or advancing or oreWorking) then return end
+    for i = 1, #charParts do
+        local p = charParts[i]
+        if p.CanCollide then p.CanCollide = false end
+    end
+end))
+
+-- 再実行用の後始末
+if getgenv then
+    getgenv().__UnderTP = function()
+        alive = false
+        for _, c in ipairs(conns) do c:Disconnect() end
+        local char = player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then hrp.Anchored = false end
+        if highlight then highlight:Destroy() end
+        sphere:Destroy()
+        gui:Destroy()
+    end
+end
+
+-- ===== 検索モード(カーソルを合わせるとID表示)v2 =====
+do
+    local INSPECT_KEY = Enum.KeyCode.J   -- 検索モードON/OFF
+    local COPY_KEY    = Enum.KeyCode.C   -- 表示中の情報をコピー
+    local UP_KEY      = Enum.KeyCode.Z   -- 1つ親のモデルへ上がる
+    local NEXT_KEY    = Enum.KeyCode.X   -- 次の候補へ切り替え
+
+    -- 後回しにする名前(小文字・部分一致)。床や地形など
+    local IGNORE_NAMES = { "plate", "floor", "baseplate", "terrain", "map" }
+    local PIXEL_RADIUS = 40     -- カーソル周りの探索半径(ピクセル)
+    local NEAR_RADIUS  = 150    -- 自分の周りこの範囲のモデルだけ画面上探索に使う
+    local BIG_SIZE     = 60     -- これより大きいモデルは「大きい」として後回し
+
+    local inspectOn = false
+    local level, candIdx = 0, 1
+    local lastTop = nil
+    local lastText = ""
+    local lastCheck = 0
+    local infoCache = setmetatable({}, { __mode = "k" })
+    local sizeCache = setmetatable({}, { __mode = "k" })
+
+    local inspectBtn = button(sPage, "", 8, 312, 234, 24)
+
+    -- カーソル横に出す表示
+    local tipGui = Instance.new("ScreenGui")
+    tipGui.Name = "InspectTip"
+    tipGui.ResetOnSpawn = false
+    tipGui.IgnoreGuiInset = true
+    tipGui.DisplayOrder = 100
+    tipGui.Parent = (gethui and gethui()) or player:WaitForChild("PlayerGui")
+
+    local tip = Instance.new("TextLabel")
+    tip.Size = UDim2.fromOffset(320, 0)
+    tip.AutomaticSize = Enum.AutomaticSize.Y
+    tip.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    tip.BackgroundTransparency = 0.15
+    tip.BorderSizePixel = 0
+    tip.TextColor3 = Color3.new(1, 1, 1)
+    tip.Font = Enum.Font.SourceSans
+    tip.TextSize = 14
+    tip.TextWrapped = true
+    tip.TextXAlignment = Enum.TextXAlignment.Left
+    tip.TextYAlignment = Enum.TextYAlignment.Top
+    tip.Visible = false
+    tip.Parent = tipGui
+    local pad = Instance.new("UIPadding")
+    pad.PaddingLeft = UDim.new(0, 6)
+    pad.PaddingRight = UDim.new(0, 6)
+    pad.PaddingTop = UDim.new(0, 4)
+    pad.PaddingBottom = UDim.new(0, 4)
+    pad.Parent = tip
+
+    local hl = Instance.new("Highlight")
+    hl.FillColor = Color3.fromRGB(0, 200, 255)
+    hl.FillTransparency = 0.5
+    hl.Parent = tipGui
+
+    -- ===== 周辺モデルの追跡(検索モードON中だけ) =====
+    local allModels, modelConns, nearList = {}, {}, {}
+
+    local function startTracking()
+        allModels = {}
+        for _, d in ipairs(workspace:GetDescendants()) do
+            if d:IsA("Model") then allModels[d] = true end
+        end
+        modelConns[1] = workspace.DescendantAdded:Connect(function(d)
+            if d:IsA("Model") then allModels[d] = true end
+        end)
+        modelConns[2] = workspace.DescendantRemoving:Connect(function(d)
+            allModels[d] = nil
+        end)
+    end
+
+    local function stopTracking()
+        for _, c in ipairs(modelConns) do c:Disconnect() end
+        modelConns, allModels, nearList = {}, {}, {}
+    end
+
+    local function refreshNear(myPos)
+        local list = {}
+        for m in pairs(allModels) do
+            if m.Parent and m ~= player.Character
+                and not m:FindFirstChildWhichIsA("Humanoid") then
+                local ok, pcf = pcall(function() return m:GetPivot() end)
+                if ok and (pcf.Position - myPos).Magnitude < NEAR_RADIUS then
+                    local ok2, cf, size = pcall(function() return m:GetBoundingBox() end)
+                    if ok2 and size.Magnitude < BIG_SIZE then
+                        table.insert(list, { obj = m, pos = cf.Position })
+                    end
+                end
+            end
+        end
+        nearList = list
+    end
+
+    -- ===== 候補の判定 =====
+    local function isBig(obj)
+        local s = sizeCache[obj]
+        if s == nil then
+            if obj:IsA("Model") then
+                local ok, ext = pcall(function() return obj:GetExtentsSize() end)
+                s = ok and ext.Magnitude or 0
+            elseif obj:IsA("BasePart") then
+                s = obj.Size.Magnitude
+            else
+                s = 0
+            end
+            sizeCache[obj] = s
+        end
+        return s > BIG_SIZE
+    end
+
+    -- 小さいほど優先: 0=モブ 1=宝箱キーワード 3=普通 9=大きい/床など
+    local function scoreOf(obj)
+        if obj:IsA("Model") and obj:FindFirstChildWhichIsA("Humanoid") then return 0 end
+        if nameMatches(obj.Name) then return 1 end
+        local lname = string.lower(obj.Name)
+        for _, w in ipairs(IGNORE_NAMES) do
+            if string.find(lname, w, 1, true) then return 9 end
+        end
+        if isBig(obj) then return 9 end
+        return 3
+    end
+
+    local function pickObj(part)
+        local nearest
+        local cur = part.Parent
+        while cur and cur ~= workspace do
+            if cur:IsA("Model") then
+                if cur:FindFirstChildWhichIsA("Humanoid") then return cur end
+                nearest = nearest or cur
+            end
+            cur = cur.Parent
+        end
+        return nearest or part
+    end
+
+    local rp = RaycastParams.new()
+    rp.FilterType = Enum.RaycastFilterType.Exclude
+
+    local function projectPx(cam, pos, loc)
+        local v, onScreen = cam:WorldToViewportPoint(pos)
+        if not onScreen or v.Z <= 0 then return nil end
+        return (Vector2.new(v.X, v.Y) - loc).Magnitude
+    end
+
+    local function buildCandidates(cam, loc)
+        local cands, seen = {}, {}
+
+        local function add(obj, part, px)
+            if not obj or obj == player.Character then return end
+            local c = seen[obj]
+            if c then
+                if px < c.px then c.px = px end
+                return
+            end
+            c = { obj = obj, part = part, score = scoreOf(obj), px = px, idx = #cands + 1 }
+            seen[obj] = c
+            table.insert(cands, c)
+        end
+
+        -- 1) 貫通レイキャスト(手前の柱や床で止まらない)
+        local filter = { sphere }
+        if player.Character then table.insert(filter, player.Character) end
+        rp.FilterDescendantsInstances = filter
+        local ray = cam:ViewportPointToRay(loc.X, loc.Y)
+        for _ = 1, 12 do
+            local res = workspace:Raycast(ray.Origin, ray.Direction * 1000, rp)
+            if not res or not res.Instance then break end
+            local part = res.Instance
+            local obj = pickObj(part)
+            add(obj, part, 0)
+            table.insert(filter, obj)   -- そのモデルごと除外して奥を探す
+            rp.FilterDescendantsInstances = filter
+        end
+
+        -- 2) 画面上の位置で探す(当たり判定の無いモデルも拾う)
+        for hum in pairs(humans) do
+            local m = hum.Parent
+            local r = m and enemyRoot(hum)
+            if r and m ~= player.Character then
+                local px = projectPx(cam, r.Position, loc)
+                if px and px < PIXEL_RADIUS * 1.5 then add(m, r, px) end
+            end
+        end
+        for _, e in ipairs(nearList) do
+            if e.obj.Parent then
+                local px = projectPx(cam, e.pos, loc)
+                if px and px < PIXEL_RADIUS then add(e.obj, nil, px) end
+            end
+        end
+
+        table.sort(cands, function(a, b)
+            if a.score ~= b.score then return a.score < b.score end
+            if math.abs(a.px - b.px) > 0.5 then return a.px < b.px end
+            return a.idx < b.idx
+        end)
+        return cands
+    end
+
+    local function partMesh(part)
+        if not part then return nil end
+        if part:IsA("MeshPart") and part.MeshId ~= "" then return part.MeshId end
+        local sm = part:FindFirstChildWhichIsA("SpecialMesh")
+        if sm and sm.MeshId ~= "" then return sm.MeshId end
+        return nil
+    end
+
+    local TAGS = { [0] = "[モブ]", [1] = "[宝箱?]", [9] = "[大/床]" }
+
+    local function inspect()
+        local loc = UIS:GetMouseLocation()
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+
+        local cands = buildCandidates(cam, loc)
+        if #cands == 0 then
+            tip.Visible = false
+            hl.Adornee = nil
+            lastTop = nil
+            return
+        end
+
+        -- 一番上の候補が変わったら選択をリセット
+        if cands[1].obj ~= lastTop then
+            lastTop = cands[1].obj
+            candIdx, level = 1, 0
+        end
+        if candIdx > #cands then candIdx = 1 end
+
+        local c = cands[candIdx]
+        local obj = c.obj
+
+        -- Zキーで親モデルへ
+        for _ = 1, level do
+            local p = obj.Parent
+            while p and p ~= workspace and not p:IsA("Model") do p = p.Parent end
+            if p and p ~= workspace then obj = p else break end
+        end
+
+        local text
+        if obj:IsA("Model") then
+            local info = infoCache[obj]
+            if not info then
+                info = collectInfo(obj, true)
+                infoCache[obj] = info
+            end
+            local isMob = obj:FindFirstChildWhichIsA("Humanoid") ~= nil
+            text = (isMob and "【モブ】" or "【モデル】") .. "\n" .. info.text
+        else
+            text = "【パーツ】\n名前: " .. obj.Name .. "\nクラス: " .. obj.ClassName
+        end
+
+        local mesh = partMesh(c.part) or (obj:IsA("BasePart") and partMesh(obj))
+        if c.part then
+            text = text .. "\nヒットパーツ: " .. c.part.Name .. (mesh and (" / " .. mesh) or "")
+        elseif mesh then
+            text = text .. "\nメッシュID: " .. mesh
+        end
+
+        -- 候補一覧
+        text = text .. "\n--- 候補 " .. candIdx .. "/" .. #cands .. " ---"
+        for i = 1, math.min(#cands, 6) do
+            local cc = cands[i]
+            text = text .. "\n" .. (i == candIdx and "▶ " or "   ") .. cc.obj.Name .. " " .. (TAGS[cc.score] or "")
+        end
+        text = text .. "\n[" .. NEXT_KEY.Name .. ":次の候補] [" .. UP_KEY.Name
+            .. ":親へ] [" .. COPY_KEY.Name .. ":コピー]"
+
+        hl.Adornee = obj
+        lastText = text
+        tip.Text = text
+        tip.Visible = true
+
+        local vp = cam.ViewportSize
+        local x = math.min(loc.X + 16, vp.X - 330)
+        local y = math.min(loc.Y + 16, vp.Y - tip.AbsoluteSize.Y - 10)
+        tip.Position = UDim2.fromOffset(math.max(0, x), math.max(0, y))
+    end
+
+    -- ===== ON/OFF =====
+    local function updateBtn()
+        inspectBtn.Text = "検索モード(ホバーでID表示): " .. (inspectOn and "ON" or "OFF")
+            .. " [" .. INSPECT_KEY.Name .. "]"
+        inspectBtn.BackgroundColor3 = inspectOn and Color3.fromRGB(40, 120, 60) or Color3.fromRGB(60, 60, 60)
+    end
+    updateBtn()
+
+    local function toggleInspect()
+        inspectOn = not inspectOn
+        if inspectOn then
+            startTracking()
+            lastCheck = 0
+        else
+            stopTracking()
+            tip.Visible = false
+            hl.Adornee = nil
+            lastTop, candIdx, level = nil, 1, 0
+        end
+        updateBtn()
+        flash("検索モード " .. (inspectOn and "ON" or "OFF"))
+    end
+    inspectBtn.MouseButton1Click:Connect(toggleInspect)
+
+    local lastNear = 0
+    table.insert(conns, RunService.Heartbeat:Connect(function()
+        if not inspectOn then return end
+        local now = os.clock()
+        if now - lastCheck < 0.05 then return end
+        lastCheck = now
+
+        local char = player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp and now - lastNear > 1 then
+            lastNear = now
+            refreshNear(hrp.Position)
+        end
+        inspect()
+    end))
+
+    table.insert(conns, UIS.InputBegan:Connect(function(input, gp)
+        if gp then return end
+        if input.KeyCode == INSPECT_KEY then
+            toggleInspect()
+        elseif inspectOn and input.KeyCode == COPY_KEY then
+            if lastText ~= "" then
+                local ok = pcall(function() setclipboard(lastText) end)
+                flash(ok and "コピーしました" or "この環境ではコピー不可")
+            end
+        elseif inspectOn and input.KeyCode == UP_KEY then
+            level += 1
+        elseif inspectOn and input.KeyCode == NEXT_KEY then
+            candIdx += 1
+            level = 0
+        end
+    end))
+
+    -- 後始末も一緒に行うように包む
+    if getgenv then
+        local oldCleanup = getgenv().__UnderTP
+        getgenv().__UnderTP = function()
+            stopTracking()
+            tipGui:Destroy()
+            if oldCleanup then oldCleanup() end
+        end
+    end
+end
+
+-- ===== 自動周回 + GUIボタン検索 + カード自動選択 =====
+do
+    local GuiService = game:GetService("GuiService")
+    local VIM
+    pcall(function() VIM = game:GetService("VirtualInputManager") end)
+    local pg = player:WaitForChild("PlayerGui")
+    local OWN = { UnderTP = true, InspectTip = true, UnderTPGuiTip = true }
+
+    local GUI_KEY  = CONFIG.GuiInspectKey
+    local COPY_KEY = Enum.KeyCode.C   -- 表示中の情報をコピー
+    local CARD_KEY = Enum.KeyCode.V   -- ホバー中のカードの文字を入力欄へ
+    local NEXT_KEY = Enum.KeyCode.X   -- 次の候補へ
+
+    -- ---------- 「自動」ページのUI ----------
+    local autoBtn = button(aPage, "", 8, 0, 150, 26)
+    local flipBtn = button(aPage, "", 162, 0, 80, 26)
+    local guiBtn = button(aPage, "", 8, 30, 234, 26)
+    local mobBtn = button(aPage, "", 8, 60, 234, 26)
+    label(aPage, "速度:", 8, 90, 40)
+    local speedBox = textbox(aPage, 48, 90, 60)
+    speedBox.PlaceholderText = "0=歩く速さ"
+    label(aPage, "高さ:", 125, 90, 40)
+    local heightBox = textbox(aPage, 165, 90, 60)
+    speedBox.Text, heightBox.Text = tostring(advSpeed), tostring(advHeight)
+    local sweepBtn = button(aPage, "", 8, 118, 234, 26)
+    local setStartBtn = button(aPage, "今の場所をステージの最初にする", 8, 146, 234, 24)
+    label(aPage, "カードのパスに含む文字(空=全ボタン)", 8, 178, 234)
+    local pathBox = textbox(aPage, 8, 200, 234)
+    pathBox.PlaceholderText = "例: CardSelect(GUI検索で確認)"
+    label(aPage, "カード優先キーワード(上ほど優先)", 8, 228, 234)
+    local cardBox = textbox(aPage, 8, 250, 150)
+    local cardAddBtn = button(aPage, "追加", 164, 249, 78, 24)
+    local cardList = scrollList(aPage, 278, 62)
+    label(aPage, "K:GUI検索 X:次の候補 C:コピー", 8, 344, 234)
+    label(aPage, "V:文字を入力欄へ N:自動ON/OFF", 8, 364, 234)
+    local oreBtn = button(aPage, "", 8, 342, 234, 26)
+    local oreLbl = label(aPage, "鉱石の名前(カンマ区切り)", 8, 372, 234)
+    local oreBox = textbox(aPage, 8, 394, 234)
+    oreBox.PlaceholderText = "例: Ore, Crystal (空=鉱石回収しない)"
+    oreBox.Text = table.concat(oreKeywords, ", ")
+    -- 鉱石の名前がランダムで使えないため、鉱石回収の欄は非表示(コードは残してある)
+    oreBtn.Visible, oreLbl.Visible, oreBox.Visible = false, false, false
+    pathBox.Text = cardPath
+
+    local function rebuildCardList()
+        for _, c in ipairs(cardList:GetChildren()) do
+            if c:IsA("Frame") then c:Destroy() end
+        end
+        for i, k in ipairs(cardPriority) do
+            local row = newRow(cardList)
+            rowLabel(row, i .. ". " .. k, 140)
+            rowBtn(row, "▲", 146, function()
+                if i > 1 then
+                    cardPriority[i], cardPriority[i - 1] = cardPriority[i - 1], cardPriority[i]
+                    save(); rebuildCardList()
+                end
+            end)
+            rowBtn(row, "▼", 172, function()
+                if i < #cardPriority then
+                    cardPriority[i], cardPriority[i + 1] = cardPriority[i + 1], cardPriority[i]
+                    save(); rebuildCardList()
+                end
+            end)
+            rowBtn(row, "✕", 198, function()
+                table.remove(cardPriority, i)
+                save(); rebuildCardList()
+            end)
+        end
+    end
+
+    local function updateMobBtn()
+        mobBtn.Text = "自動中モブTP(真下へ): " .. (autoMobTP and "ON" or "OFF")
+        mobBtn.BackgroundColor3 = autoMobTP and Color3.fromRGB(40, 120, 60) or Color3.fromRGB(60, 60, 60)
+    end
+    mobBtn.MouseButton1Click:Connect(function()
+        autoMobTP = not autoMobTP
+        target = nil
+        save(); updateMobBtn()
+        flash("自動中モブTP " .. (autoMobTP and "ON" or "OFF"))
+    end)
+    speedBox.FocusLost:Connect(function()
+        setNum(speedBox, 0, function(n) advSpeed = n end)
+        speedBox.Text = tostring(advSpeed)
+    end)
+    heightBox.FocusLost:Connect(function()
+        setNum(heightBox, -100, function(n) advHeight = n end)
+        heightBox.Text = tostring(advHeight)
+    end)
+    updateMobBtn()
+
+    pathBox.FocusLost:Connect(function()
+        cardPath = pathBox.Text
+        save()
+        flash("カードのパス: " .. (cardPath == "" and "(全ボタン)" or cardPath))
+    end)
+
+    cardAddBtn.MouseButton1Click:Connect(function()
+        local k = cardBox.Text:match("^%s*(.-)%s*$")
+        if k == "" then return end
+        if table.find(cardPriority, k) then flash("登録済み"); return end
+        table.insert(cardPriority, k)
+        cardBox.Text = ""
+        save(); rebuildCardList()
+        flash("カード優先に追加: " .. k)
+    end)
+
+    -- ---------- GUI共通ヘルパー ----------
+    local function cut(s, n)   -- 文字数で切る(日本語対応)
+        if utf8.len(s) and utf8.len(s) > n then
+            return string.sub(s, 1, utf8.offset(s, n + 1) - 1) .. "…"
+        end
+        return s
+    end
+
+    local function cleanText(s)
+        s = s:gsub("<[^>]+>", ""):gsub("%s+", " ")
+        return s:match("^%s*(.-)%s*$")
+    end
+
+    -- o とその子孫の文字(最大limit個)
+    local function textsOf(o, limit)
+        local out, scanned = {}, 0
+        local function consider(x)
+            if x:IsA("TextLabel") or x:IsA("TextButton") or x:IsA("TextBox") then
+                local s = cleanText(x.Text)
+                if s ~= "" then table.insert(out, s) end
+            end
+        end
+        consider(o)
+        for _, d in ipairs(o:GetDescendants()) do
+            scanned += 1
+            if #out >= limit or scanned > 300 then break end
+            consider(d)
+        end
+        return out
+    end
+
+    local function imagesOf(o)
+        local out, scanned = {}, 0
+        local function consider(x)
+            if (x:IsA("ImageLabel") or x:IsA("ImageButton")) and x.Image ~= "" then
+                table.insert(out, x.Image)
+            end
+        end
+        consider(o)
+        for _, d in ipairs(o:GetDescendants()) do
+            scanned += 1
+            if #out >= 4 or scanned > 300 then break end
+            consider(d)
+        end
+        return out
+    end
+
+    local function countButtons(o)
+        local n = o:IsA("GuiButton") and 1 or 0
+        for _, d in ipairs(o:GetDescendants()) do
+            if d:IsA("GuiButton") then n += 1 end
+        end
+        return n
+    end
+
+    -- ボタンを1つだけ含む一番外側の枠 = 「カード全体」(文字がボタンの外にある場合に備える)
+    local function cardRoot(b)
+        local cur = b
+        for _ = 1, 6 do
+            local p = cur.Parent
+            if not p or p == pg or p:IsA("ScreenGui") or countButtons(p) > 1 then break end
+            cur = p
+        end
+        return cur
+    end
+
+    local function isShown(o)
+        local c = o
+        while c and c ~= pg do
+            if c:IsA("GuiObject") and not c.Visible then return false end
+            if c:IsA("ScreenGui") and not c.Enabled then return false end
+            c = c.Parent
+        end
+        return true
+    end
+
+    local function screenOffset(o)
+        local sg = o:FindFirstAncestorWhichIsA("ScreenGui")
+        if sg and sg.IgnoreGuiInset then return Vector2.zero end
+        return GuiService:GetGuiInset()
+    end
+
+    -- ---------- ボタンを押す ----------
+    local function vimClick(b)
+        local c = b.AbsolutePosition + b.AbsoluteSize / 2 + screenOffset(b)
+        VIM:SendMouseButtonEvent(c.X, c.Y, 0, true, game, 0)
+        task.wait(0.05)
+        VIM:SendMouseButtonEvent(c.X, c.Y, 0, false, game, 0)
+    end
+
+    -- 1つずつ試して、ボタンが消えたら成功とみなす(二重クリック防止)
+    local function clickButton(b)
+        local methods = {}
+        if firesignal then
+            table.insert(methods, function() firesignal(b.MouseButton1Click) end)
+            table.insert(methods, function() firesignal(b.Activated) end)
+        end
+        if getconnections then
+            table.insert(methods, function()
+                for _, c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire() end
+            end)
+        end
+        if VIM then
+            table.insert(methods, function() vimClick(b) end)
+        end
+        for _, m in ipairs(methods) do
+            pcall(m)
+            task.wait(0.4)
+            if not b.Parent or not isShown(b) then return true end
+        end
+        return false
+    end
+
+    -- ---------- カード選択 ----------
+    local function collectCards()
+        local list = {}
+        for _, d in ipairs(pg:GetDescendants()) do
+            if d:IsA("GuiButton")
+                -- 軽い判定(パス)を先にやって、重い判定(表示チェック)は後に回す
+                and (cardPath == "" or string.find(d:GetFullName(), cardPath, 1, true)) then
+                local sg = d:FindFirstAncestorWhichIsA("ScreenGui")
+                if sg and not OWN[sg.Name] and isShown(d) then
+                    -- 文字(text)は重いので、ここでは集めず必要になったとき cardText で取る
+                    table.insert(list, { btn = d })
+                end
+            end
+        end
+        return list
+    end
+
+    local function cardText(c)
+        if not c.text then
+            c.text = table.concat(textsOf(cardRoot(c.btn), 20), " | ")
+        end
+        return c.text
+    end
+
+    local function pickCard()
+        if not cardEnabled() then return nil end
+        local cards = collectCards()
+        if #cards == 0 then return nil end
+        local best, bestRank
+        for _, c in ipairs(cards) do
+            local lt = string.lower(cardText(c))
+            for rank, kw in ipairs(cardPriority) do
+                if kw ~= "" and string.find(lt, string.lower(kw), 1, true) then
+                    if not bestRank or rank < bestRank then best, bestRank = c, rank end
+                    break
+                end
+            end
+        end
+        if not best and CONFIG.CardFallback and cardPath ~= "" then
+            table.sort(cards, function(a, b) return a.btn.AbsolutePosition.X < b.btn.AbsolutePosition.X end)
+            best = cards[1]
+        end
+        return best
+    end
+
+    task.spawn(function()
+        while alive do
+            task.wait(0.3)
+            if autoOn and os.clock() < cardDeadline and cardPicks < CONFIG.CardMaxPicks then
+                local c = pickCard()
+                if c then
+                    cardPicks += 1
+                    flash("カード選択: " .. cut(cardText(c), 12))
+                    clickButton(c.btn)
+                    -- 続けて次のカード選択が出る場合に備えて少し待つ
+                    cardDeadline = math.max(cardDeadline, os.clock() + 2.5)
+                end
+            end
+        end
+    end)
+
+    -- ---------- 自動前進 ----------
+    local mapObjs = {}
+    local function isMapName(n)
+        n = string.lower(n)
+        for _, k in ipairs(CONFIG.MapKeywords) do
+            if string.find(n, string.lower(k), 1, true) then return true end
+        end
+        return false
+    end
+    local function trackMap(d)
+        if (d:IsA("BasePart") or d:IsA("Model")) and isMapName(d.Name) then mapObjs[d] = true end
+    end
+    for _, d in ipairs(workspace:GetDescendants()) do trackMap(d) end
+    table.insert(conns, workspace.DescendantAdded:Connect(trackMap))
+    table.insert(conns, workspace.DescendantRemoving:Connect(function(d) mapObjs[d] = nil end))
+
+    local floorCache = { t = 0, info = nil }
+    local dirSign = setmetatable({}, { __mode = "k" })   -- 床ごとの進行方向の符号(最初に決めたら固定)
+    local lastInfo = nil
+    local flip = false   -- 進行方向の反転
+
+    local function boxOf(d)
+        if d:IsA("BasePart") then return d.CFrame, d.Size end
+        local ok, cf, size = pcall(function() return d:GetBoundingBox() end)
+        if ok then return cf, size end
+        return nil
+    end
+
+    -- 今いる床の情報: 上面のY、長い辺の向き、長さ
+    local function floorInfo(hrp)
+        local now = os.clock()
+        if now - floorCache.t < 0.5 then return floorCache.info end
+        floorCache.t = now
+        local pp = hrp.Position
+        local best, bestScore
+        for d in pairs(mapObjs) do
+            if d.Parent then
+                local cf, size = boxOf(d)
+                if cf and size.X * size.Z >= CONFIG.MinFloorArea then
+                    local rel = cf:PointToObjectSpace(pp)
+                    local inside = math.abs(rel.X) <= size.X / 2 and math.abs(rel.Z) <= size.Z / 2
+                    local dist = Vector3.new(cf.Position.X - pp.X, 0, cf.Position.Z - pp.Z).Magnitude
+                    local score = (inside and 0 or 1e6) + dist
+                    if not bestScore or score < bestScore then
+                        best, bestScore = { obj = d, cf = cf, size = size }, score
+                    end
+                end
+            end
+        end
+        if not best then
+            floorCache.info = nil
+            return nil
+        end
+        local cf, size = best.cf, best.size
+        local axis, len
+        if size.X >= size.Z then axis, len = cf.RightVector, size.X else axis, len = cf.LookVector, size.Z end
+        axis = Vector3.new(axis.X, 0, axis.Z)
+        axis = axis.Magnitude > 0.01 and axis.Unit or Vector3.new(1, 0, 0)
+        -- 最初は「今いる側から遠いほうの端」へ向かう。違えば反転ボタンで逆にする
+        local sign = dirSign[best.obj]
+        if not sign then
+            sign = (pp - cf.Position):Dot(axis) > 0 and -1 or 1
+            dirSign[best.obj] = sign
+        end
+        local info = { top = cf.Position.Y + size.Y / 2, center = cf.Position, axis = axis, len = len, sign = sign }
+        floorCache.info = info
+        return info
+    end
+
+    local function advanceDir(info)
+        if CONFIG.AdvanceMode == "axis" then
+            local a = CONFIG.AdvanceAxis
+            a = Vector3.new(a.X, 0, a.Z)
+            return a.Magnitude > 0 and a.Unit or nil
+        end
+        return info.axis * info.sign * (flip and -1 or 1)
+    end
+
+    local function updateFlipBtn()
+        flipBtn.Text = "向き反転:" .. (flip and "ON" or "OFF")
+        flipBtn.BackgroundColor3 = flip and Color3.fromRGB(120, 90, 40) or Color3.fromRGB(60, 60, 60)
+    end
+    flipBtn.MouseButton1Click:Connect(function()
+        flip = not flip
+        updateFlipBtn()
+        flash("進行方向を" .. (flip and "反転" or "元に戻し") .. "ました")
+    end)
+
+    local function updateAutoBtn()
+        autoBtn.Text = "自動周回 " .. (autoOn and "ON" or "OFF") .. " [" .. CONFIG.AutoKey.Name .. "]"
+        autoBtn.BackgroundColor3 = autoOn and Color3.fromRGB(40, 120, 60) or Color3.fromRGB(60, 60, 60)
+    end
+
+    local function toggleAuto()
+        autoOn = not autoOn
+        cardDeadline = 0
+        if autoOn then
+            chestOn = true   -- 宝箱の検知が必要
+            refresh()
+        else
+            autoInfo = ""
+            advancing = false
+            -- 地中に埋まったままだと落ちるので、床の上に戻す
+            local char = player.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp and lastInfo then
+                hrp.CFrame = CFrame.new(hrp.Position.X, lastInfo.top + 3, hrp.Position.Z)
+                    * (hrp.CFrame - hrp.CFrame.Position)
+                hrp.AssemblyLinearVelocity = Vector3.zero
+            end
+        end
+        updateAutoBtn()
+        flash("自動周回 " .. (autoOn and "ON" or "OFF"))
+    end
+    autoBtn.MouseButton1Click:Connect(toggleAuto)
+
+    -- ---------- 鉱石の追跡 ----------
+    local oreSet = {}
+    local stallT, stallPos, nextOreCheck = 0, nil, 0   -- 壁判定(進めていない)のサンプルと、次に鉱石を調べてよい時刻
+
+    local function oreNameMatches(name)
+        name = string.lower(name)
+        for _, k in ipairs(oreKeywords) do
+            if k ~= "" and string.find(name, string.lower(k), 1, true) then return true end
+        end
+        return false
+    end
+
+    -- 鉱石か: 自分の名前、または親(フォルダなど)の名前が登録名に一致するモデル/パーツ
+    local function isOre(d)
+        if #oreKeywords == 0 then return false end
+        if not (d:IsA("Model") or d:IsA("BasePart")) then return false end
+        local par = d.Parent
+        if not (oreNameMatches(d.Name) or (par and par ~= workspace and oreNameMatches(par.Name))) then
+            return false
+        end
+        if d:IsA("Model") and d:FindFirstChildWhichIsA("Humanoid") then return false end
+        local p = par
+        while p and p ~= workspace do   -- 鉱石モデルの中のパーツは、モデル1個として数える
+            if p:IsA("Model") and oreNameMatches(p.Name) then return false end
+            p = p.Parent
+        end
+        return true
+    end
+
+    local function rescanOres()
+        oreSet = {}
+        if #oreKeywords == 0 then return end
+        for _, d in ipairs(workspace:GetDescendants()) do
+            if isOre(d) then oreSet[d] = true end
+        end
+    end
+    local function oreCount()
+        local c = 0
+        for _ in pairs(oreSet) do c += 1 end
+        return c
+    end
+    table.insert(conns, workspace.DescendantAdded:Connect(function(d)
+        if isOre(d) then oreSet[d] = true end
+    end))
+    table.insert(conns, workspace.DescendantRemoving:Connect(function(d) oreSet[d] = nil end))
+    rescanOres()
+
+    -- 壁に当たった場所(origin)の周りの鉱石へ順にTPして掘り、なくなったら origin へ戻る
+    local function oreRun(origin)
+        oreWorking = true
+        local char = player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local moved, anchored = false, false
+        local skipped, n = {}, 0
+        pcall(function()
+            while hrp and hrp.Parent and autoOn and oreOn and not busy and #pending == 0 do
+                -- 今いる場所から一番近い、まだ残っている鉱石
+                local best, bestD
+                for d in pairs(oreSet) do
+                    if d.Parent and not skipped[d] then
+                        local p = objPos(d)
+                        if p and (p - origin).Magnitude <= CONFIG.OreRadius then
+                            local dd = (p - hrp.Position).Magnitude
+                            if not bestD or dd < bestD then best, bestD = d, dd end
+                        end
+                    end
+                end
+                if not best then break end   -- 周りに鉱石がもうない
+                local pos = objPos(best)
+                if not pos then
+                    skipped[best] = true
+                else
+                    n += 1
+                    moved, anchored = true, true
+                    autoInfo = "自動: 鉱石を掘る(" .. n .. "個目)"
+                    local rot = hrp.CFrame - hrp.CFrame.Position
+                    hrp.Anchored = true
+                    hrp.CFrame = CFrame.new(pos + Vector3.new(0, CONFIG.OreOffsetY, 0)) * rot
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                    local t0 = os.clock()
+                    while best.Parent and hrp.Parent and autoOn and not busy and #pending == 0
+                        and os.clock() - t0 < CONFIG.OreStay do
+                        task.wait(0.1)
+                    end
+                    if best.Parent then skipped[best] = true end   -- 掘れなかった鉱石は飛ばす
+                end
+                task.wait()
+            end
+        end)
+        -- 宝箱の処理(busy)に入ったら位置には触らない。それ以外は壁へ戻る
+        if hrp and hrp.Parent and not busy then
+            if moved and autoOn then
+                local rot = hrp.CFrame - hrp.CFrame.Position
+                hrp.CFrame = CFrame.new(origin) * rot
+                hrp.AssemblyLinearVelocity = Vector3.zero
+            end
+            if anchored then hrp.Anchored = false end
+        end
+        nextOreCheck = os.clock() + CONFIG.OreRecheck
+        autoInfo = ""
+        oreWorking = false
+    end
+
+    local function updateOreBtn()
+        oreBtn.Text = "鉱石回収(壁で周りを掘る): " .. (oreOn and "ON" or "OFF")
+        oreBtn.BackgroundColor3 = oreOn and Color3.fromRGB(40, 120, 60) or Color3.fromRGB(60, 60, 60)
+    end
+    oreBtn.MouseButton1Click:Connect(function()
+        oreOn = not oreOn
+        save(); updateOreBtn()
+        flash("鉱石回収 " .. (oreOn and "ON" or "OFF"))
+    end)
+    oreBox.FocusLost:Connect(function()
+        local txt = oreBox.Text:gsub("、", ",")
+        local list = {}
+        for part in string.gmatch(txt, "[^,]+") do
+            local k = part:match("^%s*(.-)%s*$")
+            if k ~= "" and not table.find(list, k) then table.insert(list, k) end
+        end
+        oreKeywords = list
+        save(); rescanOres()
+        oreBox.Text = table.concat(oreKeywords, ", ")
+        flash(#list == 0 and "鉱石回収: 名前が空(動きません)" or ("鉱石 " .. oreCount() .. "個を検出"))
+    end)
+    updateOreBtn()
+
+    -- ---------- ステージ周回: 画面のDEPTHの数値が変わった場所 = ステージの最初 ----------
+    local stageStart, depthVal, sweepCount, nextSweep, blockedSince = nil, nil, 0, 0, nil
+    local depthLabel, lastDepthScan = nil, 0
+
+    -- 画面から深さの表示を探す(「DEPTH 9,540 M」1つのラベル、または数字ラベルと「DEPTH」ラベルが同じ親にある形)
+    local function findDepthLabel()
+        local kw = string.lower(CONFIG.DepthKeyword)
+        local numLabel
+        for _, d in ipairs(pg:GetDescendants()) do
+            if d:IsA("TextLabel") then
+                local sg = d:FindFirstAncestorWhichIsA("ScreenGui")
+                if sg and not OWN[sg.Name] then
+                    local t = string.lower(cleanText(d.Text))
+                    if string.find(t, kw, 1, true) and string.match(t, "%d") then return d end
+                    if not numLabel and string.match(t, "^[%d,%.]+%s*m$") and d.Parent then
+                        for _, sib in ipairs(d.Parent:GetChildren()) do
+                            if sib ~= d and sib:IsA("TextLabel")
+                                and string.find(string.lower(cleanText(sib.Text)), kw, 1, true) then
+                                numLabel = d
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return numLabel
+    end
+
+    local function readDepth()
+        if not (depthLabel and depthLabel.Parent) then
+            local now = os.clock()
+            if not autoOn or now - lastDepthScan < 3 then return nil end   -- 探すのは自動周回中だけ、3秒おき
+            lastDepthScan = now
+            depthLabel = findDepthLabel()
+            if not depthLabel then return nil end
+        end
+        local num = string.match(cleanText(depthLabel.Text), "(%d[%d,%.]*)")
+        return num and tonumber((num:gsub(",", ""))) or nil
+    end
+
+    -- 数値が変わった瞬間の位置を、そのステージの最初として記録する
+    task.spawn(function()
+        while alive do
+            task.wait(0.2)
+            local d = readDepth()
+            if d then
+                if depthVal and d ~= depthVal then
+                    local char = player.Character
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        stageStart = hrp.Position
+                        sweepCount = 0
+                        flash("ステージ更新 " .. depthVal .. " → " .. d .. "(最初の位置を記録)")
+                    end
+                end
+                depthVal = d
+            end
+        end
+    end)
+
+    local function updateSweepBtn()
+        sweepBtn.Text = "壁でステージの最初へ戻る: " .. (sweepOn and "ON" or "OFF")
+        sweepBtn.BackgroundColor3 = sweepOn and Color3.fromRGB(40, 120, 60) or Color3.fromRGB(60, 60, 60)
+    end
+    sweepBtn.MouseButton1Click:Connect(function()
+        sweepOn = not sweepOn
+        save(); updateSweepBtn()
+        flash("壁でステージの最初へ戻る " .. (sweepOn and "ON" or "OFF"))
+    end)
+    setStartBtn.MouseButton1Click:Connect(function()
+        local char = player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            stageStart = hrp.Position
+            flash("ステージの最初を今の場所にしました")
+        end
+    end)
+    updateSweepBtn()
+
+    -- 毎フレーム: 床の上に浮いたまま進行方向へ進む(止まるべき時は浮いたまま位置を固定)
+    local lastStatus = 0
+    table.insert(conns, RunService.Heartbeat:Connect(function(dt)
+        if not autoOn then advancing = false; stallPos = nil; return end
+        local char = player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not (hrp and hum) then return end
+
+        local info = floorInfo(hrp) or lastInfo
+        if info then lastInfo = info end
+
+        local movingNow, inAdvance = false, false   -- 前進中か / 前進の処理に入ったか(壁判定のサンプルを捨てるために使う)
+        if busy or walking then
+            advancing = false
+        elseif oreWorking then
+            advancing = false          -- 鉱石回収中は oreRun が位置を決める
+        elseif enemyActive() and target then
+            advancing = false          -- 敵追跡に任せる
+            autoInfo = "自動: 戦闘中"
+        elseif not info then
+            advancing = false
+            autoInfo = "自動: 床が見つかりません"
+        else
+            inAdvance = true
+            local stopped = false
+            if #pending > 0 then
+                stopped = true
+                autoInfo = ""          -- 宝箱の状況は chestInfo が表示する
+            elseif os.clock() < cardDeadline then
+                stopped = true
+                autoInfo = "自動: カード選択待ち"
+            end
+
+            local pos = hrp.Position
+            if not stageStart then stageStart = pos end   -- 最初は開始時の位置(深さが変わったら更新)
+            local dirv = advanceDir(info)
+            local arrived, stalled = false, false
+            if not stopped and dirv and CONFIG.AdvanceMode ~= "axis" then
+                if (pos - info.center):Dot(dirv) >= info.len / 2 - CONFIG.ArriveMargin then
+                    arrived = true
+                end
+            end
+
+            local np, keepY = pos, false
+            if not stopped and not arrived and dirv then
+                local speed = advSpeed > 0 and advSpeed or hum.WalkSpeed
+                np = pos + dirv * speed * dt
+                autoInfo = "自動: 前進中 深さ" .. (depthVal and tostring(depthVal) or "?")
+                movingNow = true
+                -- 進めていない(壁に当たった)判定: 一定時間で期待する距離の2割も進めていない
+                local t = os.clock()
+                if not stallPos then
+                    stallT, stallPos = t, pos
+                elseif t - stallT >= CONFIG.WallStallTime then
+                    if (pos - stallPos):Dot(dirv) < speed * (t - stallT) * 0.2 then stalled = true end
+                    stallT, stallPos = t, pos
+                end
+            elseif arrived then
+                autoInfo = "自動: 床の端に到着"
+            end
+
+            -- 壁に当たった判定: 進めていない(stalled)、または床の端でWallStallTime秒止まっている
+            if arrived then
+                blockedSince = blockedSince or os.clock()
+            else
+                blockedSince = nil
+            end
+            local wallHit = stalled or (blockedSince ~= nil and os.clock() - blockedSince >= CONFIG.WallStallTime)
+
+            if oreOn and #oreKeywords > 0 then
+                -- 鉱石の名前が登録されているときだけ: 周りの鉱石を掘りに行く(従来の方式)
+                if (arrived or stalled) and not oreWorking and os.clock() >= nextOreCheck then
+                    nextOreCheck = os.clock() + CONFIG.OreRecheck   -- 空振りしても連発しない
+                    task.spawn(oreRun, pos)
+                end
+            elseif wallHit and sweepOn and stageStart and os.clock() >= nextSweep then
+                -- 壁に当たって止まった → ステージの最初へ戻って、また壁まで進む
+                sweepCount += 1
+                nextSweep = os.clock() + CONFIG.WallStallTime
+                np, keepY = stageStart, true
+                stallPos, blockedSince = nil, nil
+                floorCache.t = 0   -- 戻った先の床の情報を取り直す
+                autoInfo = "自動: 壁→最初へ戻る(" .. sweepCount .. "回目)"
+            end
+
+            np = Vector3.new(np.X, keepY and np.Y or (info.top + advHeight), np.Z)
+            hrp.CFrame = CFrame.new(np) * (hrp.CFrame - hrp.CFrame.Position)
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            advancing = true
+        end
+
+        if not movingNow then stallPos = nil end
+        if not inAdvance then blockedSince = nil end
+        local now = os.clock()
+        if now - lastStatus > 0.25 then
+            lastStatus = now
+            if not busy and msgToken == 0 then status.Text = statusLine() end
+        end
+    end))
+
+    -- ---------- GUIボタン検索(カーソルが当たっているボタンのIDを表示) ----------
+    local guiOn = false
+    local candIdx, lastTop, lastText, lastObj, lastCheck = 1, nil, "", nil, 0
+    local descCache = setmetatable({}, { __mode = "k" })
+    local connCache = setmetatable({}, { __mode = "k" })
+
+    local gtipGui = Instance.new("ScreenGui")
+    gtipGui.Name = "UnderTPGuiTip"
+    gtipGui.ResetOnSpawn = false
+    gtipGui.IgnoreGuiInset = true
+    gtipGui.DisplayOrder = 101
+    gtipGui.Parent = (gethui and gethui()) or pg
+
+    local gtip = Instance.new("TextLabel")
+    gtip.Size = UDim2.fromOffset(340, 0)
+    gtip.AutomaticSize = Enum.AutomaticSize.Y
+    gtip.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    gtip.BackgroundTransparency = 0.1
+    gtip.BorderSizePixel = 0
+    gtip.TextColor3 = Color3.new(1, 1, 1)
+    gtip.Font = Enum.Font.SourceSans
+    gtip.TextSize = 14
+    gtip.TextWrapped = true
+    gtip.TextXAlignment = Enum.TextXAlignment.Left
+    gtip.TextYAlignment = Enum.TextYAlignment.Top
+    gtip.Visible = false
+    gtip.Parent = gtipGui
+    local gpad = Instance.new("UIPadding")
+    gpad.PaddingLeft = UDim.new(0, 6)
+    gpad.PaddingRight = UDim.new(0, 6)
+    gpad.PaddingTop = UDim.new(0, 4)
+    gpad.PaddingBottom = UDim.new(0, 4)
+    gpad.Parent = gtip
+
+    local outline = Instance.new("Frame")
+    outline.BackgroundTransparency = 1
+    outline.BorderSizePixel = 0
+    outline.Visible = false
+    outline.Parent = gtipGui
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 220, 0)
+    stroke.Thickness = 2
+    stroke.Parent = outline
+
+    -- 標準のクリックイベントではなく InputBegan 等で自作しているGUIも拾う(executor側の機能が使える場合)
+    local function hasInput(o)
+        local v = connCache[o]
+        if v == nil then
+            v = false
+            if getconnections then
+                pcall(function()
+                    if #getconnections(o.InputBegan) > 0 then v = true end
+                end)
+            end
+            connCache[o] = v
+        end
+        return v
+    end
+
+    local function hits()
+        local m = UIS:GetMouseLocation()
+        local inset = GuiService:GetGuiInset()
+        local res, seen = {}, {}
+        -- 通常のScreenGuiは(マウス-inset)、IgnoreGuiInsetのものはマウス座標で判定される
+        local function add(list, ignoreInset)
+            for _, o in ipairs(list) do
+                if not seen[o] then
+                    local sg = o:FindFirstAncestorWhichIsA("ScreenGui")
+                    if sg and not OWN[sg.Name] and sg.IgnoreGuiInset == ignoreInset then
+                        seen[o] = true
+                        table.insert(res, { obj = o, sg = sg, i = #res + 1 })
+                    end
+                end
+            end
+        end
+        add(pg:GetGuiObjectsAtPosition(m.X - inset.X, m.Y - inset.Y), false)
+        add(pg:GetGuiObjectsAtPosition(m.X, m.Y), true)
+
+        local out = {}
+        for _, h in ipairs(res) do
+            h.score = h.obj:IsA("GuiButton") and 0 or (hasInput(h.obj) and 1 or 2)
+            if h.score < 2 or CONFIG.GuiShowAll then table.insert(out, h) end
+        end
+        table.sort(out, function(a, b)
+            if a.score ~= b.score then return a.score < b.score end
+            if a.sg.DisplayOrder ~= b.sg.DisplayOrder then return a.sg.DisplayOrder > b.sg.DisplayOrder end
+            return a.i < b.i
+        end)
+        return out
+    end
+
+    local function describe(o)
+        local lines = {}
+        table.insert(lines, (o:IsA("GuiButton") and "【ボタン】 " or "【GUI】 ") .. o.ClassName)
+        table.insert(lines, "名前: " .. o.Name)
+        table.insert(lines, "パス: " .. o:GetFullName())
+
+        local chain, c = {}, o
+        while c and c ~= pg do
+            table.insert(chain, 1, c.Name)
+            c = c.Parent
+        end
+        local expr = 'game:GetService("Players").LocalPlayer.PlayerGui'
+        for _, n in ipairs(chain) do
+            expr = expr .. ":FindFirstChild(" .. string.format("%q", n) .. ")"
+        end
+        table.insert(lines, "取得: " .. expr)
+
+        local par = o.Parent
+        if par then
+            local idx, same, sameIdx = 0, 0, 0
+            for i, ch in ipairs(par:GetChildren()) do
+                if ch == o then idx = i end
+                if ch.Name == o.Name then
+                    same += 1
+                    if ch == o then sameIdx = same end
+                end
+            end
+            table.insert(lines, string.format("親の子の%d番目(同名 %d/%d)", idx, sameIdx, same))
+        end
+
+        local own = textsOf(o, 8)
+        if #own > 0 then table.insert(lines, "文字: " .. table.concat(own, " | ")) end
+        local root = cardRoot(o)
+        if root ~= o then
+            local rt = textsOf(root, 10)
+            if #rt > 0 then
+                table.insert(lines, "カード全体の文字(" .. root.Name .. "): " .. table.concat(rt, " | "))
+            end
+        end
+        local im = imagesOf(root)
+        if #im > 0 then table.insert(lines, "画像: " .. table.concat(im, ", ")) end
+
+        table.insert(lines, string.format("位置: %d,%d  サイズ: %d x %d",
+            math.floor(o.AbsolutePosition.X), math.floor(o.AbsolutePosition.Y),
+            math.floor(o.AbsoluteSize.X), math.floor(o.AbsoluteSize.Y)))
+
+        local attrs = {}
+        for k, v in pairs(o:GetAttributes()) do table.insert(attrs, k .. "=" .. tostring(v)) end
+        if #attrs > 0 then table.insert(lines, "属性: " .. table.concat(attrs, ", ")) end
+        return table.concat(lines, "\n")
+    end
+
+    local TAGS = { [0] = "[ボタン]", [1] = "[入力あり]", [2] = "[GUI]" }
+
+    local function inspectGui()
+        local cands = hits()
+        if #cands == 0 then
+            gtip.Visible = false
+            outline.Visible = false
+            lastTop = nil
+            return
+        end
+        if cands[1].obj ~= lastTop then
+            lastTop = cands[1].obj
+            candIdx = 1
+        end
+        if candIdx > #cands then candIdx = 1 end
+        local cur = cands[candIdx]
+        local o = cur.obj
+
+        local now = os.clock()
+        local dc = descCache[o]
+        if not dc or now - dc.t > 0.5 then
+            dc = { t = now, text = describe(o) }
+            descCache[o] = dc
+        end
+
+        local text = dc.text .. "\n--- 候補 " .. candIdx .. "/" .. #cands .. " ---"
+        for i = 1, math.min(#cands, 6) do
+            local cc = cands[i]
+            text = text .. "\n" .. (i == candIdx and "▶ " or "   ") .. cc.obj.Name .. " " .. (TAGS[cc.score] or "")
+        end
+        text = text .. "\n[" .. NEXT_KEY.Name .. ":次の候補] [" .. COPY_KEY.Name
+            .. ":コピー] [" .. CARD_KEY.Name .. ":文字を入力欄へ]"
+
+        lastObj, lastText = o, text
+        gtip.Text = text
+        gtip.Visible = true
+
+        local off = screenOffset(o)
+        local p = o.AbsolutePosition + off
+        outline.Position = UDim2.fromOffset(p.X, p.Y)
+        outline.Size = UDim2.fromOffset(o.AbsoluteSize.X, o.AbsoluteSize.Y)
+        outline.Visible = true
+
+        local cam = workspace.CurrentCamera
+        local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+        local m = UIS:GetMouseLocation()
+        local x = math.min(m.X + 16, vp.X - 350)
+        local y = math.min(m.Y + 16, vp.Y - gtip.AbsoluteSize.Y - 10)
+        gtip.Position = UDim2.fromOffset(math.max(0, x), math.max(0, y))
+    end
+
+    local function updateGuiBtn()
+        guiBtn.Text = "GUIボタン検索(ホバーでID表示): " .. (guiOn and "ON" or "OFF") .. " [" .. GUI_KEY.Name .. "]"
+        guiBtn.BackgroundColor3 = guiOn and Color3.fromRGB(40, 120, 60) or Color3.fromRGB(60, 60, 60)
+    end
+
+    local function toggleGui()
+        guiOn = not guiOn
+        if not guiOn then
+            gtip.Visible = false
+            outline.Visible = false
+            lastTop, candIdx = nil, 1
+        end
+        updateGuiBtn()
+        flash("GUIボタン検索 " .. (guiOn and "ON" or "OFF"))
+    end
+    guiBtn.MouseButton1Click:Connect(toggleGui)
+
+    table.insert(conns, RunService.Heartbeat:Connect(function()
+        if not guiOn then return end
+        local now = os.clock()
+        if now - lastCheck < 0.08 then return end
+        lastCheck = now
+        inspectGui()
+    end))
+
+    table.insert(conns, UIS.InputBegan:Connect(function(input, gp)
+        if gp then return end
+        local k = input.KeyCode
+        if k == CONFIG.AutoKey then
+            toggleAuto()
+        elseif k == GUI_KEY then
+            toggleGui()
+        elseif guiOn and k == COPY_KEY then
+            if lastText ~= "" then
+                local ok = pcall(function() setclipboard(lastText) end)
+                flash(ok and "コピーしました" or "この環境ではコピー不可")
+            end
+        elseif guiOn and k == NEXT_KEY then
+            candIdx += 1
+        elseif guiOn and k == CARD_KEY then
+            if lastObj then
+                local s = textsOf(cardRoot(lastObj), 1)[1]
+                if s then
+                    cardBox.Text = s
+                    flash("入力欄に: " .. cut(s, 10))
+                else
+                    flash("文字が見つかりません")
+                end
+            end
+        end
+    end))
+
+    -- 後始末
+    if getgenv then
+        local oldCleanup = getgenv().__UnderTP
+        getgenv().__UnderTP = function()
+            autoOn = false
+            gtipGui:Destroy()
+            if oldCleanup then oldCleanup() end
+        end
+    end
+
+    rebuildCardList()
+    updateFlipBtn()
+    updateAutoBtn()
+    updateGuiBtn()
+end
+
+refresh()
+rebuildPriorityList()
+rebuildKeywordList()
